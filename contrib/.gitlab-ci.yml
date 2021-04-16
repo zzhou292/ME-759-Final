@@ -1,0 +1,469 @@
+
+#####################################
+## ProjectChrono Default CI Config ##
+#####################################
+
+# Build Stages (shared by each platform)
+stages:
+  - build
+  - test
+  - deploy
+
+#---------------------#
+# Arch Linux Builders #
+#---------------------#
+
+.archlinux:
+  tags:
+  - linux
+  image: 
+    name: archlinux/base
+    entrypoint: ["/usr/bin/bash", "-c"]
+  before_script:
+  - uname -a
+  - pacman -Syyu --noconfirm base-devel cuda git eigen cmake glfw glm glew glut irrlicht ninja wget python python-pip openmpi swig hdf5
+# Clean up the package cache to make more space for the build
+  - pacman -Scc --noconfirm
+  - ldconfig
+  - wget https://bitbucket.org/blaze-lib/blaze/downloads/blaze-3.8.tar.gz
+  - tar -xf blaze-3.8.tar.gz
+  - cp blaze-3.8/blaze -r /usr/local/include
+  - git submodule init
+  - git submodule update
+  - mkdir -p build
+# Make flatbuffers
+  - cd src/chrono_thirdparty/flatbuffers
+  - cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release .
+  - make
+  - cd $CI_PROJECT_DIR
+
+linux:arch-gcc:build:
+  stage: build
+  extends: .archlinux
+  script:
+  - cd build
+  - echo $CI_PROJECT_DIR
+  - cmake ../ --preset=linuxci
+    -DCMAKE_C_COMPILER=/usr/bin/gcc 
+    -DCMAKE_CXX_COMPILER=/usr/bin/g++ 
+    -DEIGEN3_INCLUDE_DIR=/usr/include/eigen3
+  - make -j 8
+  artifacts:
+    expire_in: 60m
+    paths:
+    - build/
+    
+
+linux:arch-gcc:test:
+  stage: test
+  needs: ["linux:arch-gcc:build"]
+  extends: .archlinux
+  script:
+  - cd build
+  - export OMP_NUM_THREADS=8
+  - make test
+  dependencies: ["linux:arch-gcc:build"]
+
+
+linux:doxygen:deploy:
+  tags:
+  - linux
+  image: 
+    name: archlinux/base
+    entrypoint: ["/usr/bin/bash", "-c"]
+  stage: deploy
+  before_script:
+#    - pacman -Syyu --noconfirm base-devel git python python-pip doxygen graphviz openssh rsync clang
+    - pacman -Syyu --noconfirm base-devel git python python-pip graphviz openssh rsync wget
+    - wget https://downloads.sourceforge.net/project/doxygen/rel-1.8.16/doxygen-1.8.16.linux.bin.tar.gz
+    - tar -xf doxygen-1.8.16.linux.bin.tar.gz
+    - mkdir -p ~/.ssh
+    - chmod 0700 ~/.ssh
+# This private key is only useable from specific IPs, so it should be okay to
+# be included here.
+    - cp $API_PRIVATE_KEY ~/.ssh/id_rsa
+    - chmod 0600 ~/.ssh/id_rsa
+# Remove any duplicate host key entries, if necessary
+    - if test -f ~/.ssh/known_hosts; then ssh-keygen -R $API_REINDEX_ENDPOINT; fi
+# Cache a verified host pubkey from file to avoid MITM attacks
+    - cat $API_ENDPOINT_PUBKEY >> ~/.ssh/known_hosts
+  script:
+    - export PATH="$PWD/doxygen-1.8.16/bin:$PATH"
+    - cd doxygen
+    - doxygen Doxyfile
+    # - doxygen Doxyfile_Generate_Search_Index
+    - rsync -ra /tmp/chrono_doxygen/html/* $API_HTML_ENDPOINT
+    - rsync /tmp/chrono_doxygen/searchdata.xml $API_SEARCH_ENDPOINT
+    - ssh $API_REINDEX_ENDPOINT /var/www/cgi-bin/doxyindexer.cgi /var/www/cgi-bin/searchdata.xml
+  environment:
+    name: doxygen
+    url: http://api.projectchrono.org/
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == "develop"'
+      when: always
+  
+
+
+linux:arch-llvm:build:
+  stage: build
+  extends: .archlinux
+  script:
+  - pacman -S --noconfirm llvm clang openmp
+  - cd build
+  - cmake ../ --preset=linuxci 
+    -DCMAKE_C_COMPILER=/usr/bin/clang
+    -DCMAKE_CXX_COMPILER=/usr/bin/clang++ 
+    -DEIGEN3_INCLUDE_DIR=/usr/include/eigen3
+    -DCUDA_HOST_COMPILER=/usr/bin/gcc
+  - make -j 8
+  artifacts:
+    expire_in: 60m
+    paths:
+    - build/
+
+
+linux:arch-llvm:test:
+  stage: test
+  needs: ["linux:arch-llvm:build"]
+  extends: .archlinux
+  script:
+  - pacman -S --noconfirm llvm clang openmp
+  - cd build
+  - export OMP_NUM_THREADS=8
+  - make test
+  dependencies: ["linux:arch-llvm:build"]
+
+
+#----------------#
+# Ubuntu Builder #
+#----------------#
+
+.ubuntu:
+  tags:
+    - linux
+  image:
+    name: nvidia/cuda:11.0-devel-ubuntu18.04
+  before_script:
+    - uname -a
+    - export DEBIAN_FRONTEND=noninteractive
+    - apt-get update; apt-get -y install wget python git 
+        cmake build-essential libboost-dev swig3.0 libeigen3-dev 
+        libglfw3-dev libglm-dev libglew-dev freeglut3-dev libirrlicht-dev
+        libopenmpi-dev python3 python3-dev libhdf5-dev
+    - ldconfig
+    - wget https://bitbucket.org/blaze-lib/blaze/downloads/blaze-3.8.tar.gz
+    - tar -xf blaze-3.8.tar.gz
+    - cp -r blaze-3.8/blaze /usr/local/include
+    - wget https://gitlab.com/libeigen/eigen/-/archive/3.3.9/eigen-3.3.9.tar.bz2
+    - tar -xf eigen-3.3.9.tar.bz2
+    - cp -r eigen-3.3.9 /usr/local/include/eigen3
+    - git submodule init
+    - git submodule update
+    - mkdir -p build
+    # Make flatbuffers
+    - cd src/chrono_thirdparty/flatbuffers
+    - cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release .
+    - make
+    - cd $CI_PROJECT_DIR
+
+.ubuntu-deploy-base:
+  extends: .ubuntu
+  before_script:
+    # this script overwrites the default ubuntu script to include conda preparations
+    - uname -a
+    - export DEBIAN_FRONTEND=noninteractive
+    - apt-get update; apt-get -y install wget python git 
+        cmake build-essential libboost-dev swig3.0 libeigen3-dev 
+        libglfw3-dev libglm-dev libglew-dev freeglut3-dev libirrlicht-dev
+        libopenmpi-dev python3 python3-dev
+    - ldconfig
+    - wget https://bitbucket.org/blaze-lib/blaze/downloads/blaze-3.8.tar.gz
+    - tar -xf blaze-3.8.tar.gz
+    - cp blaze-3.8/blaze -r /usr/local/include
+    - git submodule init
+    - git submodule update
+    - echo "Build PyChrono and deploy via Anaconda..."
+    # this command is needed to get the git describe data needed by the numbering
+    - git fetch --prune --unshallow
+    - export CONDA_NPY=19
+    - wget "http://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+    - bash Miniconda3-latest-Linux-x86_64.sh -b
+    - export PATH=$HOME/miniconda3/bin:$PATH
+    - conda update --yes conda
+    - conda install --yes pip jinja2
+    - conda config --set show_channel_urls true
+    - conda install conda-build anaconda-client conda-verify --yes
+    - conda update conda --yes
+    - conda config --add channels https://conda.anaconda.org/conda-forge
+    - conda config --add channels https://conda.anaconda.org/intel
+    - conda install --yes conda-build anaconda-client
+    - conda install -c dlr-sc opencascade --yes
+    - conda install -c intel mkl-devel --yes
+  environment:
+    name: pychrono-ubuntu1804
+    url: https://anaconda.org/projectchrono/pychrono
+
+
+#----------------#
+# Ubuntu Builder #
+#----------------#
+
+# Ubuntu 18.04 doesn't have a sufficiently new CMake for presets, so we rely on manual configuration
+linux:ubuntu1804:build:
+  stage: build
+  extends: .ubuntu
+  script:
+    - cd build
+    - cmake ../ -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=TRUE 
+        -DBUILD_BENCHMARKING=TRUE -DENABLE_MODULE_POSTPROCESS=TRUE 
+        -DENABLE_MODULE_PYTHON=TRUE -DENABLE_MODULE_COSIMULATION=FALSE 
+        -DENABLE_MODULE_IRRLICHT=TRUE -DENABLE_MODULE_VEHICLE=TRUE 
+        -DENABLE_MODULE_MULTICORE=TRUE -DENABLE_MODULE_OPENGL=TRUE
+        -DENABLE_MODULE_SYNCHRONO=TRUE -DENABLE_MODULE_CSHARP=TRUE
+        -DENABLE_MODULE_GPU=TRUE -DENABLE_MODULE_DISTRIBUTED=TRUE
+        -DENABLE_HDF5=TRUE
+        -DCMAKE_C_COMPILER=/usr/bin/gcc 
+        -DCMAKE_CXX_COMPILER=/usr/bin/g++
+        -DCUDA_HOST_COMPILER=/usr/bin/gcc
+        -DPYTHON_EXECUTABLE=/usr/bin/python3
+        -DEIGEN3_INCLUDE_DIR=/usr/local/include/eigen3
+    - make -j 8
+  artifacts:
+    expire_in: 60m
+    paths:
+      - build/
+
+
+linux:ubuntu1804:test:
+  stage: test
+  needs: ["linux:ubuntu1804:build"]
+  extends: .ubuntu
+  script:
+    - cd build
+    - export OMP_NUM_THREADS=8
+    - make test
+  dependencies: ["linux:ubuntu1804:build"]
+
+
+linux:ubuntu1804:deploy-python3.6:
+  stage: deploy
+  needs: []
+  extends: .ubuntu-deploy-base
+  script:
+    - conda build purge-all
+    - conda build ./contrib/packaging-python/conda --no-remove-work-dir --dirty --python=3.6
+    - anaconda -t $ANACONDA_TOKEN upload $HOME/miniconda3/conda-bld/linux-64/pychrono*.bz2 -l develop --force
+  when: manual
+
+linux:ubuntu1804:deploy-python3.7:
+  stage: deploy
+  needs: []
+  extends: .ubuntu-deploy-base
+  script:
+    - conda build purge-all
+    - conda build ./contrib/packaging-python/conda --no-remove-work-dir --dirty --python=3.7
+    - anaconda -t $ANACONDA_TOKEN upload $HOME/miniconda3/conda-bld/linux-64/pychrono*.bz2 -l develop --force
+  when: manual
+
+linux:ubuntu1804:deploy-python3.8:
+  stage: deploy
+  needs: []
+  extends: .ubuntu-deploy-base
+  script:
+    - conda build purge-all
+    - conda build ./contrib/packaging-python/conda --no-remove-work-dir --dirty --python=3.8
+    - anaconda -t $ANACONDA_TOKEN upload $HOME/miniconda3/conda-bld/linux-64/pychrono*.bz2 -l develop --force
+  when: manual
+
+
+#------------------#
+# Windows Builders #
+#------------------#
+
+.windows:
+  tags:
+  - windows
+  before_script:
+  - $Env:CONDA_INSTALL_LOCN= "C:\Users\builder\anaconda3"
+  - echo $CI_PROJECT_DIR
+  - git submodule init
+  - git submodule update
+  - mkdir -Force build
+
+windows:vs2019:build:
+  stage: build
+  extends: .windows
+  script:
+  # Build flatbuffers
+  - cd $CI_PROJECT_DIR/src/chrono_thirdparty/flatbuffers
+  - cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=Release .
+  - '& "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe" FlatBuffers.sln -maxcpucount:8 -property:Configuration=Release'
+  # Main build
+  - cd $CI_PROJECT_DIR/build
+  - cmake --preset=windowsci-vs2019 ..
+  #- cmake --build . -t ALL_BUILD -j 8
+  #- Invoke-Expression "& `'C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\devenv.com`' Chrono.sln -Build `"Release|x64`" -log buildlog.txt"
+  - '& "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe" Chrono.sln -maxcpucount:8 -property:Configuration=Release'
+  artifacts:
+    expire_in: 60m
+    paths:
+      - build/
+
+
+windows:vs2019:test:
+  stage: test
+  needs: ["windows:vs2019:build"]
+  extends: .windows
+  script:
+  - cd build
+  - ctest
+  dependencies: ["windows:vs2019:build"]
+
+
+windows:vs2019:deploy:
+  stage: deploy
+  needs: []
+  extends: .windows
+  script:
+    - rm -r build
+    # get libiomp5md.lib
+    - $libiomppth=Join-Path -Path $Env:CONDA_INSTALL_LOCN -ChildPath "\Library\lib\libiomp5md.lib"
+    - Invoke-WebRequest -Uri http://www.projectchrono.org/assets/downloads/libiomp5md.lib  -OutFile $libiomppth
+    - mkdir ./logs
+    - $Env:LOG_DIR=Join-Path -Path $pwd -ChildPath "\logs"
+    # this command is needed to get the git describe data needed by the numbering
+    - git fetch --prune --unshallow
+    # Uncomment the following lines to get a fresh install of Miniconda
+    #- $Env:CONDA_INSTALL_LOCN= "C:\Users\builder\Miniconda3"
+    #- Invoke-WebRequest -Uri https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe  -OutFile ./Miniconda3-latest-Windows-x86_64.exe >temp.txt
+    #- Start-Process -Wait  "Miniconda3-latest-Windows-x86_64.exe" -ArgumentList "/InstallationType=JustMe /RegisterPython=0 /S /D=$env:CONDA_INSTALL_LOCN"
+    # Initializing the PowerShell would require to restart it. Since it isn't possible, we use the cmd instead.
+    - Start-Process "cmd.exe" "/c .\contrib\packaging-python\gitlab\build_pychrono.bat >outputfile.txt" -Wait
+    - get-content outputfile.txt
+    - Copy-Item "./outputfile.txt" -Destination "./logs/"
+    - Remove-Item $Env:CONDA_INSTALL_LOCN\conda-bld\*pychrono* -Recurse -Force
+
+  environment:
+    name: pychrono-win64
+    url: https://anaconda.org/projectchrono/pychrono
+  when: manual
+  artifacts:
+    expire_in: 60m
+    paths:
+      - ./logs/
+
+windows:vs2017:build:
+  stage: build
+  extends: .windows
+  script:
+    # Build flatbuffers
+  - cd $CI_PROJECT_DIR/src/chrono_thirdparty/flatbuffers
+  - cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=Release .
+  - '& "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe" FlatBuffers.sln -maxcpucount:8 -property:Configuration=Release'
+  - cd $CI_PROJECT_DIR/build
+  - cmake --preset=windowsci-vs2017 ..
+  #- cmake --build . -t ALL_BUILD -j 8
+  #- Invoke-Expression "& `'C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\devenv.com`' Chrono.sln -Build `"Release|x64`" -log buildlog.txt"
+  - '& "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe" Chrono.sln -maxcpucount:8 -property:Configuration=Release'
+  artifacts:
+    expire_in: 60m
+    paths:
+      - build/
+
+
+#----------------#
+# macOS Builders #
+#----------------#
+
+.macos:
+  tags:
+    - macos
+  before_script:
+  - uname -a
+  - git submodule init
+  - git submodule update
+  - mkdir -p build
+
+
+.macos-deploy-base:
+  extends: .macos
+  before_script:
+    - export CONDA_NPY=19
+    - wget https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh -O ~/miniconda.sh
+    - rm -r $HOME/miniconda > /dev/null 2>&1 || FAILED=true
+    - bash ~/miniconda.sh -b -p $HOME/miniconda
+    - export PATH=$HOME/miniconda/bin:$PATH
+    - conda install --yes -c intel jinja2
+    - conda config --set show_channel_urls true
+    - conda install conda-build=3.18.11 anaconda-client conda-verify --yes
+    - conda config --add channels https://conda.anaconda.org/conda-forge
+    - conda config --add channels https://conda.anaconda.org/intel
+    #- conda install -c dlr-sc opencascade --yes
+    - conda install -c intel mkl-devel --yes
+    - ls $HOME/miniconda/lib/
+    - conda build purge-all
+    # this command is needed to get the git describe data needed by the numbering
+    - git fetch --prune --unshallow
+    - clang --version
+    - mv -f ./contrib/packaging-python/conda/buildMacOS.sh ./contrib/packaging-python/conda/build.sh
+    - conda install -c conda-forge llvm-openmp --yes
+  environment:
+    name: pychrono-macos
+    url: https://anaconda.org/projectchrono/pychrono
+
+
+macos:bigsur:build:
+  stage: build
+  extends: .macos
+  script:
+  - cd build
+  - cmake ../ --preset=macosci
+    -DCMAKE_C_COMPILER=$(which clang)
+    -DCMAKE_CXX_COMPILER=$(which clang++)
+  - make -j 3
+  artifacts:
+    expire_in: 60m
+    paths:
+    - build/
+    
+
+macos:bigsur:test:
+  stage: test
+  needs: ["macos:bigsur:build"]
+  extends: .macos
+  script:
+  - cd build
+  - make test
+  dependencies: ["macos:bigsur:build"]
+
+
+macos:macos-deploy-python3.6:
+  stage: deploy
+  needs: []
+  extends: .macos-deploy-base
+  script:
+    - echo "Build PyChrono 3.6 and deploy via Anaconda..."
+    - conda build purge-all
+    - conda build ./contrib/packaging-python/conda --no-remove-work-dir --dirty --python=3.6
+    - anaconda -t $ANACONDA_TOKEN upload $HOME/miniconda/conda-bld/osx-64/pychrono*.bz2 -l develop --force
+  when: manual
+macos:macos-deploy-python3.7:
+  stage: deploy
+  needs: []
+  extends: .macos-deploy-base
+  script:
+    - echo "Build PyChrono 3.7 and deploy via Anaconda..."
+    - conda build purge-all
+    - conda build ./contrib/packaging-python/conda --no-remove-work-dir --dirty --python=3.7
+    - anaconda -t $ANACONDA_TOKEN upload $HOME/miniconda/conda-bld/osx-64/pychrono*.bz2 -l develop --force
+  when: manual
+macos:macos-deploy-python3.8:
+  stage: deploy
+  needs: []
+  extends: .macos-deploy-base
+  script:
+    - echo "Build PyChrono 3.8 and deploy via Anaconda..."
+    - conda build purge-all
+    - conda build ./contrib/packaging-python/conda --no-remove-work-dir --dirty --python=3.8
+    - anaconda -t $ANACONDA_TOKEN upload $HOME/miniconda/conda-bld/osx-64/pychrono*.bz2 -l develop --force
+  when: manual
