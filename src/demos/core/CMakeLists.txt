@@ -2,18 +2,18 @@
 # Add executables
 
 SET(DEMOS
-  demo_CH_coords
-  demo_CH_linalg
-  demo_CH_matrix_ref
-  demo_CH_math
-  demo_CH_stream
-  demo_CH_archive
-  demo_CH_buildsystem
-  demo_CH_powertrain
-  demo_CH_functions
-  demo_CH_solver
-  demo_CH_EulerAngles
-  demo_CH_filesystem
+  #demo_CH_coords
+  #demo_CH_linalg
+  #demo_CH_matrix_ref
+  #demo_CH_math
+  #demo_CH_stream
+  #demo_CH_archive
+  #demo_CH_buildsystem
+  #demo_CH_powertrain
+  #demo_CH_functions
+  #demo_CH_solver
+  #demo_CH_EulerAngles
+  #demo_CH_filesystem
 )
 
 

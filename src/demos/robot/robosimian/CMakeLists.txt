@@ -6,5 +6,5 @@ if(NOT ENABLE_MODULE_VEHICLE)
   return()
 endif()
 
-add_subdirectory(sequential)
-add_subdirectory(multicore)
+#add_subdirectory(sequential)
+#add_subdirectory(multicore)

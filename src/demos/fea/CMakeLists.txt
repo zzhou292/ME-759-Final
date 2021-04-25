@@ -1,25 +1,25 @@
 #--------------------------------------------------------------
 # List all FEA demos that do have no other dependencies
 set(FEA_DEMOS
-    demo_FEA_basic
-    demo_FEA_dynamics
-    demo_FEA_loads_statics
+    #demo_FEA_basic
+    #demo_FEA_dynamics
+    #demo_FEA_loads_statics
 )
 
 # Add demos that require Irrlicht
 if(ENABLE_MODULE_IRRLICHT)
 set(FEA_DEMOS ${FEA_DEMOS}
-    demo_FEA_thermal
-    demo_FEA_electrostatics
-    demo_FEA_visualize
-    demo_FEA_contacts
-    demo_FEA_cables
-    demo_FEA_ancfShell
-    demo_FEA_ancfShell_8
-    demo_FEA_brick
-    demo_FEA_cosimulate_load
-    demo_FEA_loads_dynamics
-    demo_FEA_truss
+    #demo_FEA_thermal
+    #demo_FEA_electrostatics
+    #demo_FEA_visualize
+    #demo_FEA_contacts
+    #demo_FEA_cables
+    #demo_FEA_ancfShell
+    #demo_FEA_ancfShell_8
+    #demo_FEA_brick
+    #demo_FEA_cosimulate_load
+    #demo_FEA_loads_dynamics
+    #demo_FEA_truss
 )
 endif()
 

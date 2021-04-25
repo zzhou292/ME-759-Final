@@ -21,8 +21,8 @@ include_directories(${CH_IRRLICHTINC})
 # ------------------------------------------------------------------------------
 
 set(DEMOS
-    demo_ROBOT_Viper_Rigid
-    demo_ROBOT_Viper_SCM
+    #demo_ROBOT_Viper_Rigid
+    #demo_ROBOT_Viper_SCM
 )
 
 # ------------------------------------------------------------------------------
