@@ -256,6 +256,14 @@ else()
 endif()
 source_group("terrain" FILES ${CV_TERRAIN_FILES} ${CV_OPENCRG_FILES})
 
+
+set(CV_TERRAINCUDA_FILES
+    cuda/hello.cuh
+    cuda/hello.cu
+    )
+source_group("terraincuda" FILES ${CV_TERRAINCUDA_FILES})
+
+
 set(CV_UTILS_FILES
     utils/ChSteeringController.h
     utils/ChSteeringController.cpp
@@ -824,6 +832,11 @@ if(HAVE_OPENCRG)
     list(APPEND LIBRARIES ${OPENCRG_LIBRARY})
 endif()
 
+
+CUDA_ADD_LIBRARY(ChronoEngine_vehicle_cuda SHARED
+    ${CV_TERRAINCUDA_FILES}
+)
+
 add_library(ChronoEngine_vehicle SHARED
 #
     ${CV_BASE_FILES}
@@ -871,13 +884,14 @@ set_target_properties(ChronoEngine_vehicle PROPERTIES
                       COMPILE_FLAGS "${CXX_FLAGS}"
                       LINK_FLAGS "${CH_LINKERFLAG_SHARED}")
 
+
 target_compile_definitions(ChronoEngine_vehicle PRIVATE "CH_API_COMPILE_VEHICLE")
 target_compile_definitions(ChronoEngine_vehicle PRIVATE "CH_IGNORE_DEPRECATED")
 if(HDF5_FOUND)
 target_compile_definitions(ChronoEngine_vehicle PRIVATE ${HDF5_COMPILE_DEFS})
 endif()
 
-target_link_libraries(ChronoEngine_vehicle ${LIBRARIES})
+target_link_libraries(ChronoEngine_vehicle ChronoEngine_vehicle_cuda ${LIBRARIES})
 
 install(TARGETS ChronoEngine_vehicle
         RUNTIME DESTINATION bin
